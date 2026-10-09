@@ -1,7 +1,10 @@
 extends TableRoot
-## Title screen: the title and a few showcase cards slam in, then pick 2–4 players.
+## Title screen: the title and a few showcase cards slam in, then pick a mode:
+## Tutorial, VS CPU (difficulty and number of CPUs) or Multiplayer (the lobby).
 
 const GAME_SCENE := "res://scenes/game.tscn"
+const LOBBY_SCENE := "res://scenes/lobby.tscn"
+const SERVER_SCENE := "res://scenes/server.tscn"
 const C := CardData.CardColor
 const M := CardData.Modifier
 const SHOWCASE := [
@@ -13,25 +16,31 @@ const SHOWCASE := [
 ]
 
 var _showcase: Array[CardView] = []
-var _buttons := HBoxContainer.new()
+var _buttons := HBoxContainer.new()   # the three modes
+var _cpu_panel := VBoxContainer.new() # VS CPU settings
 var _leaving := false
 var _time := 0.0
 
 
 func _ready() -> void:
+	if Session.server_mode:
+		get_tree().change_scene_to_file.call_deferred(SERVER_SCENE)
+		return
 	_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	_buttons.add_theme_constant_override("separation", 34)
-	_buttons.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_buttons.offset_top = -250
-	_buttons.offset_bottom = -170
-	_buttons.offset_left = -600
-	_buttons.offset_right = 600
+	_place_bottom(_buttons, -250, -170)
 	_buttons.hide()   # not clickable until the intro has finished
 	ui.add_child(_buttons)
-	for n in [2, 3, 4]:
-		var b := UiKit.button("%d PLAYERS" % n, 38)
-		b.pressed.connect(_start.bind(n))
-		_buttons.add_child(b)
+	var tutorial := UiKit.button("TUTORIAL" if Session.tutorial_done else "TUTORIAL  (START HERE)", 38)
+	tutorial.pressed.connect(_start.bind(Session.Mode.TUTORIAL))
+	_buttons.add_child(tutorial)
+	var cpu := UiKit.button("VS CPU", 38)
+	cpu.pressed.connect(_show_cpu_panel)
+	_buttons.add_child(cpu)
+	var online := UiKit.button("MULTIPLAYER", 38)
+	online.pressed.connect(_start.bind(Session.Mode.ONLINE))
+	_buttons.add_child(online)
+	_build_cpu_panel()
 
 	var hint := Label.new()
 	hint.text = "Brew a %d-card potion each round. Highest score after %d rounds wins." % [Rules.POTION_SIZE, Rules.ROUNDS]
@@ -57,6 +66,49 @@ func _ready() -> void:
 	UiKit.fade_in(_buttons, 0.4)
 
 
+func _place_bottom(c: Control, top: float, bottom: float) -> void:
+	c.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	c.offset_top = top
+	c.offset_bottom = bottom
+	c.offset_left = -700
+	c.offset_right = 700
+
+
+func _build_cpu_panel() -> void:
+	_cpu_panel.alignment = BoxContainer.ALIGNMENT_END
+	_cpu_panel.add_theme_constant_override("separation", 16)
+	_place_bottom(_cpu_panel, -470, -130)
+	_cpu_panel.hide()
+	ui.add_child(_cpu_panel)
+	_cpu_panel.add_child(UiKit.label("DIFFICULTY", 28, Palette.TEXT_DIM, true))
+	_cpu_panel.add_child(UiKit.segmented(["EASY", "MEDIUM", "OPTIMAL"], Session.difficulty,
+		func(i: int): Session.difficulty = i))
+	_cpu_panel.add_child(UiKit.label("OPPONENTS", 28, Palette.TEXT_DIM, true))
+	_cpu_panel.add_child(UiKit.segmented(["1 CPU", "2 CPUS", "3 CPUS"], Session.num_players - 2,
+		func(i: int): Session.num_players = i + 2))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 30)
+	var back := UiKit.button("BACK", 34)
+	back.pressed.connect(func():
+		_cpu_panel.hide()
+		_raise_showcase(0.0)
+		_buttons.show()
+		UiKit.fade_in(_buttons, 0.2))
+	row.add_child(back)
+	var start := UiKit.button("START", 38)
+	start.pressed.connect(_start.bind(Session.Mode.CPU))
+	row.add_child(start)
+	_cpu_panel.add_child(row)
+
+
+func _show_cpu_panel() -> void:
+	_raise_showcase(-110.0)
+	_buttons.hide()
+	_cpu_panel.show()
+	UiKit.fade_in(_cpu_panel, 0.2)
+
+
 func _slam_showcase() -> void:
 	for i in SHOWCASE.size():
 		var spec: Array = SHOWCASE[i]
@@ -75,6 +127,14 @@ func _slam_showcase() -> void:
 		await get_tree().create_timer(0.08).timeout
 
 
+## Slides the showcase cards up to make room for the CPU settings (0 puts them back).
+func _raise_showcase(dy: float) -> void:
+	var mid := (_showcase.size() - 1) / 2.0
+	for i in _showcase.size():
+		var home := TableLayout.CENTER + Vector2((i - mid) * (CardArt.SIZE.x + 30.0), 40 + absf(i - mid) * 16.0 + dy)
+		_showcase[i].move_to(home, 0.3)
+
+
 func _process(delta: float) -> void:
 	_time += delta
 	if _leaving:
@@ -87,12 +147,13 @@ func _process(delta: float) -> void:
 			v.lift = 4.0 + 4.0 * sin(_time * 2.0 + i * 0.9)
 
 
-func _start(n: int) -> void:
+func _start(mode: Session.Mode) -> void:
 	if _leaving:
 		return
 	_leaving = true
-	Session.num_players = n
-	_buttons.create_tween().tween_property(_buttons, "modulate:a", 0.0, 0.2)
+	Session.mode = mode
+	for c in [_buttons, _cpu_panel]:
+		c.create_tween().tween_property(c, "modulate:a", 0.0, 0.2)
 	var last: Tween
 	for v in _showcase:
 		last = v.move_tween().set_parallel()
@@ -102,4 +163,4 @@ func _start(n: int) -> void:
 		await get_tree().create_timer(0.05).timeout
 	if last:
 		await last.finished
-	get_tree().change_scene_to_file(GAME_SCENE)
+	get_tree().change_scene_to_file(LOBBY_SCENE if mode == Session.Mode.ONLINE else GAME_SCENE)

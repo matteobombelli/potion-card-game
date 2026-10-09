@@ -25,6 +25,11 @@ static func seats(n: int) -> Array:
 	return spots.map(func(p): return { "position": p, "top": p.y < CENTER.y })
 
 
+## Seat index for `player` when `me` sits at the bottom (seat 0) and turns go clockwise.
+static func seat_of(player: int, me: int, n: int) -> int:
+	return (player - me + n) % n
+
+
 ## Centres of the middle decks, in a row across the middle of the table.
 static func deck_positions(count: int) -> Array[Vector2]:
 	var spacing := CardArt.SIZE.x + DECK_GAP

@@ -1,14 +1,18 @@
 class_name Hud
 extends CanvasLayer
-## In-game heads-up display: round counter, whose turn it is with a prompt, and
-## the Skip swap button.
+## In-game heads-up display: round counter, whose turn it is with a prompt, the
+## Skip swap button and a Menu button that asks before leaving the game.
 
 signal skip_pressed
+signal leave_confirmed
 
 var _round_label := Label.new()
 var _turn_label := Label.new()
 var _prompt_label := Label.new()
 var _skip := UiKit.button("SKIP SWAP", 30, Palette.SWAP)
+var _menu := UiKit.button("MENU", 24)
+var _confirm: Control
+var leave_text := "Leave this game?"
 
 
 func _init() -> void:
@@ -40,12 +44,20 @@ func _init() -> void:
 	_skip.hide()
 	add_child(_skip)
 
+	_menu.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_menu.offset_left = -170
+	_menu.offset_right = -24
+	_menu.offset_top = 18
+	_menu.offset_bottom = 74
+	_menu.pressed.connect(_ask_leave)
+	add_child(_menu)
+
 
 func set_round(index: int, total: int) -> void:
 	_round_label.text = "ROUND %d / %d" % [mini(index + 1, total), total]
 
 
-## Sets the big title (e.g. "PLAYER 2") with a small pop, plus the instruction below it.
+## Sets the big title (e.g. "YOUR TURN") with a small pop, plus the instruction below it.
 func set_turn(title: String, prompt: String) -> void:
 	_prompt_label.text = prompt
 	if _turn_label.text == title:
@@ -66,6 +78,10 @@ func clear() -> void:
 	_prompt_label.text = ""
 
 
+func show_menu_button(on: bool) -> void:
+	_menu.visible = on
+
+
 func show_skip(on: bool) -> void:
 	if _skip.visible == on:
 		return
@@ -75,3 +91,31 @@ func show_skip(on: bool) -> void:
 		_skip.scale = Vector2.ZERO
 		_skip.create_tween().tween_property(_skip, "scale", Vector2.ONE, 0.3) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _ask_leave() -> void:
+	if _confirm:
+		return
+	_confirm = Control.new()
+	_confirm.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_confirm.add_child(UiKit.dim())
+	var box := VBoxContainer.new()
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	box.add_theme_constant_override("separation", 30)
+	_confirm.add_child(box)
+	box.add_child(UiKit.label(leave_text, 44, Palette.TITLE, true))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 30)
+	box.add_child(row)
+	var leave := UiKit.button("LEAVE")
+	leave.pressed.connect(leave_confirmed.emit)
+	row.add_child(leave)
+	var stay := UiKit.button("KEEP PLAYING")
+	stay.pressed.connect(func():
+		_confirm.queue_free()
+		_confirm = null)
+	row.add_child(stay)
+	add_child(_confirm)
+	UiKit.fade_in(box, 0.15)

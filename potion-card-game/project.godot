@@ -19,6 +19,7 @@ run/main_scene="res://scenes/main_menu.tscn"
 
 Fx="*res://scripts/fx/fx.gd"
 Session="*res://scripts/session.gd"
+Net="*res://scripts/net/net.gd"
 
 [display]
 

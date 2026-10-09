@@ -30,6 +30,42 @@ static func deal_middle_decks(n: int, rng: RandomNumberGenerator) -> Array:
 	return decks
 
 
+## Like deal_middle_decks, but with scripted cards on top (used by the tutorial).
+## `stacks[i]` lists card specs for deck i, top first (see CardData.parse_spec). Those
+## cards are taken out of the full deck; the rest are shuffled and dealt underneath so
+## the decks end up the same size. Returns [] if a spec is bad or a card runs out.
+static func deal_fixed(n: int, stacks: Array, rng: RandomNumberGenerator) -> Array:
+	var pool := build_full_deck()
+	var tops: Array = []
+	for i in n:
+		var top: Array[CardData] = []
+		var specs: Array = stacks[i] if i < stacks.size() else []
+		for spec in specs:
+			var want := CardData.parse_spec(spec)
+			var idx := -1 if want == null else pool.find_custom(func(c): return c.same_face(want))
+			if idx < 0:
+				push_error("DeckBuilder.deal_fixed: no card left for spec '%s'" % spec)
+				return []
+			top.append(pool.pop_at(idx))
+		tops.append(top)
+	shuffle(pool, rng)
+	var total: int = pool.size() + tops.reduce(func(a, t): return a + t.size(), 0)
+	var decks: Array = []
+	for i in n:
+		var target: int = total / n + (1 if i < total % n else 0)
+		var d: Array[CardData] = []
+		for k in maxi(0, target - tops[i].size()):
+			if not pool.is_empty():
+				d.append(pool.pop_back())
+		var top: Array = tops[i].duplicate()
+		top.reverse()   # specs are listed top first; the deck's top is its last element
+		d.append_array(top)
+		decks.append(d)
+	for c in pool:   # only if a stack was longer than its share
+		decks[0].push_front(c)
+	return decks
+
+
 ## Fisher-Yates using the given RNG, so a seeded game is reproducible (needed for online play).
 static func shuffle(arr: Array, rng: RandomNumberGenerator) -> void:
 	for i in range(arr.size() - 1, 0, -1):

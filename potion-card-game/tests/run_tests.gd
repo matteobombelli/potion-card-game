@@ -23,6 +23,11 @@ func _init() -> void:
 	test_swap()
 	test_full_games()
 	test_determinism()
+	test_legal_actions()
+	test_fixed_setup()
+	test_snapshot_roundtrip()
+	test_redaction()
+	test_tutorial_script()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	quit(1 if _fails > 0 else 0)
 
@@ -42,8 +47,8 @@ func card(color: int, value := 1, mod := M.NONE, mod_color := C.BLACK) -> CardDa
 
 ## Chooses orders for everyone so the game is in the PLAY phase.
 func choose_all_orders(gs: GameState, pick := 0) -> void:
-	while gs.phase == GameState.Phase.CHOOSE_ORDER:
-		gs.choose_order(gs.current_player, pick)
+	for p in gs.players_needing_order():
+		gs.choose_order(p, pick)
 
 
 ## Plays legal moves (first non-empty deck, alternating sides, skipping swaps) until the round ends.
@@ -194,17 +199,33 @@ func test_order_flow() -> void:
 		var gs := GameState.new(n, 3)
 		for rnd in Rules.ROUNDS:
 			check(gs.phase == GameState.Phase.CHOOSE_ORDER, "round starts with order choice")
-			var choosers: Array = []
-			while gs.phase == GameState.Phase.CHOOSE_ORDER:
-				choosers.append(gs.current_player)
-				check(gs.order_offers[gs.current_player].size() == Rules.ORDERS_OFFERED, "offered %d orders" % Rules.ORDERS_OFFERED)
-				check(gs.choose_order(gs.current_player, rnd % 2), "choose order")
-			check(choosers.size() == n and choosers[0] == gs.first_player, "everyone chooses, first player first (n=%d)" % n)
+			check(gs.players_needing_order().size() == n, "everyone chooses an order (n=%d)" % n)
+			# Choose in reverse seat order: players choose at the same time, in any order.
+			var choosers := gs.players_needing_order()
+			choosers.reverse()
+			for k in choosers.size():
+				var p: int = choosers[k]
+				check(gs.order_offers[p].size() == Rules.ORDERS_OFFERED, "offered %d orders" % Rules.ORDERS_OFFERED)
+				check(not gs.choose_order(p, 9), "bad offer index rejected")
+				check(gs.choose_order(p, rnd % 2), "choose order")
+				check(not gs.choose_order(p, 0), "can't choose twice")
+				var last := k == choosers.size() - 1
+				check((gs.phase == GameState.Phase.PLAY) == last, "drafting starts only after the last choice")
+			check(gs.current_player == gs.first_player, "first player starts drafting")
 			check(gs.orders.all(func(o): return o != null), "every player holds an order")
 			play_out_round(gs)
 			check(gs.last_round_scores.all(func(b): return not b.order.is_empty()), "order scored for every player")
 			gs.next_round()
 		check(gs.order_deck.size() == 20 - n * Rules.ROUNDS, "kept orders are used up, rejected ones return (n=%d)" % n)
+
+	# The order of choices doesn't change the game.
+	var a := GameState.new(3, 11)
+	var b := GameState.new(3, 11)
+	for p in [0, 1, 2]:
+		a.choose_order(p, p % 2)
+	for p in [2, 0, 1]:
+		b.choose_order(p, p % 2)
+	check(JSON.stringify(a.to_snapshot()) == JSON.stringify(b.to_snapshot()), "choice order doesn't matter")
 
 
 # --- Turn flow ----------------------------------------------------------------
@@ -214,7 +235,8 @@ func test_turn_validation() -> void:
 	var p := gs.current_player
 	var other := (p + 1) % 3
 	check(not gs.play_card(p, 0, LEFT), "can't play before orders are chosen")
-	check(not gs.choose_order(other, 0), "can't choose an order out of turn")
+	check(gs.choose_order(other, 0), "anyone can choose an order")
+	check(not gs.choose_order(other, 0), "but only once")
 	choose_all_orders(gs)
 	check(gs.phase == GameState.Phase.PLAY, "play phase after orders")
 	check(not gs.play_card(other, 0, LEFT), "can't play out of turn")
@@ -286,3 +308,137 @@ func test_determinism() -> void:
 		a.next_round()
 		b.next_round()
 	check(a.totals == b.totals, "same seed, same moves, same result")
+
+
+# --- Legal actions, fixed setups and snapshots -------------------------------
+
+## Plays a whole game picking random legal actions; calls `each(gs)` before every action.
+func random_game(gs: GameState, seed: int, each := Callable()) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	while gs.phase != GameState.Phase.GAME_OVER:
+		if each.is_valid():
+			each.call(gs)
+		if gs.phase == GameState.Phase.ROUND_OVER:
+			gs.next_round()
+			continue
+		var acting: Array = Array(gs.players_needing_order()) if gs.phase == GameState.Phase.CHOOSE_ORDER else [gs.current_player]
+		var p: int = acting[rng.randi_range(0, acting.size() - 1)]
+		var acts := gs.legal_actions(p)
+		check(not acts.is_empty(), "the acting player always has a legal action")
+		if acts.is_empty():
+			return
+		check(gs.apply(acts[rng.randi_range(0, acts.size() - 1)]), "legal action accepted")
+
+
+func test_legal_actions() -> void:
+	for n in [2, 3, 4]:
+		var gs := GameState.new(n, 21 + n)
+		var swaps := [0]
+		random_game(gs, n, func(g: GameState):
+			if g.phase == GameState.Phase.SWAP:
+				swaps[0] += 1
+			# Every listed action is accepted by a copy; others' actions are never listed.
+			var p := g.current_player
+			for a in g.legal_actions(p):
+				check(g.clone().apply(a), "listed action is legal: %s" % a)
+			if g.phase == GameState.Phase.PLAY or g.phase == GameState.Phase.SWAP:
+				check(g.legal_actions((p + 1) % n).is_empty(), "nothing listed out of turn"))
+		check(swaps[0] > 0, "random games reach the swap phase (n=%d)" % n)
+		check(gs.discard.size() == n * Rules.POTION_SIZE * Rules.ROUNDS, "discard holds every used card")
+	var empty := GameState.new(2, 1)
+	choose_all_orders(empty)
+	var plays := empty.legal_actions(empty.current_player)
+	check(plays.all(func(a): return a.side == LEFT), "an empty potion lists one side only")
+	check(empty.apply({ "type": "play_card", "player": float(empty.current_player), "deck": 0.0, "side": 1.0 }), "apply() accepts JSON floats")
+
+
+func test_fixed_setup() -> void:
+	var setup := {
+		"first_player": 1,
+		"decks": [["Y1", "G1", "K-2*R"], ["K0", "R1>Y"], ["Y0*Y"]],
+		"offers": [[["OUTSIDE:RED", "BASE_ZERO"], ["LACKS:BLUE", "ALL_MODS"]]],
+	}
+	var gs := GameState.new(2, 5, setup)
+	check(gs.first_player == 1 and gs.current_player == 1, "scripted first player")
+	check(str(gs.top_card(0)) == "Yellow +1" and str(gs.top_card(1)) == "Black +0" and str(gs.top_card(2)) == "Yellow +0 [G Yellow]", "scripted tops")
+	check(str(gs.middle_decks[0][-2]) == "Green +1" and str(gs.middle_decks[0][-3]) == "Black -2 [G Red]", "scripted stack order")
+	var sizes: Array = gs.middle_decks.map(func(d): return d.size())
+	check(sizes.reduce(func(a, b): return a + b, 0) == 96 and sizes.max() - sizes.min() <= 1, "fixed deal uses every card evenly: %s" % [sizes])
+	var ids := {}
+	for d in gs.middle_decks:
+		for c in d:
+			ids[c.id] = true
+	check(ids.size() == 96, "fixed deal has no duplicate cards")
+	check(gs.order_offers[0].map(func(o): return o.kind) == [K.OUTSIDE_COLOR, K.BASE_ZERO] and gs.order_offers[0][0].color == C.RED, "scripted offers p0")
+	check(gs.order_offers[1].map(func(o): return o.kind) == [K.LACKS_COLOR, K.ALL_MODIFIERS] and gs.order_offers[1][0].color == C.BLUE, "scripted offers p1")
+	check(gs.order_deck.size() == 16, "scripted offers come out of the order deck")
+	play_out_round(gs)
+	gs.next_round()
+	check(gs.order_offers.all(func(o): return o.size() == Rules.ORDERS_OFFERED), "later rounds deal random offers")
+	check(CardData.parse_spec("Q1") == null and CardData.parse_spec("R1<") == null, "bad specs rejected")
+
+
+func test_snapshot_roundtrip() -> void:
+	for n in [2, 4]:
+		var a := GameState.new(n, 77)
+		choose_all_orders(a)
+		for k in 5:
+			a.apply(a.legal_actions(a.current_player)[0])
+		var b := GameState.from_snapshot(JSON.parse_string(JSON.stringify(a.to_snapshot())))
+		check(JSON.stringify(b.to_snapshot()) == JSON.stringify(a.to_snapshot()), "full snapshot round-trips (n=%d)" % n)
+		random_game(a, 3)
+		random_game(b, 3)
+		check(a.totals == b.totals, "a restored game plays on identically (n=%d)" % n)
+		var c := a.clone()
+		check(JSON.stringify(c.to_snapshot()) == JSON.stringify(a.to_snapshot()), "clone matches")
+
+
+func test_redaction() -> void:
+	var gs := GameState.new(3, 99)
+	random_game(gs, 8, func(g: GameState):
+		for p in g.num_players:
+			var snap := g.to_snapshot(p)
+			var text := JSON.stringify(snap)
+			check(not snap.has("rng") and not snap.has("returns") and not snap.has("setup"), "no RNG or private lists")
+			check(snap.decks.all(func(d): return not d.has("cards")), "decks show only their tops")
+			check(snap.order_deck is int, "order deck is a count")
+			var revealed := g.phase == GameState.Phase.ROUND_OVER or g.phase == GameState.Phase.GAME_OVER
+			for o in g.num_players:
+				if o == p:
+					continue
+				check(snap.offers[o] is int, "others' offers are a count")
+				if g.orders[o] != null and not revealed:
+					check(snap.orders[o] is bool, "others' orders hidden until scoring")
+			var v := GameState.from_snapshot(JSON.parse_string(text))
+			check(JSON.stringify(v.legal_actions(p)) == JSON.stringify(g.legal_actions(p)), "redacted view lists the same legal actions")
+			for d in g.middle_decks.size():
+				check(str(v.top_card(d)) == str(g.top_card(d)) and v.middle_decks[d].size() == g.middle_decks[d].size(), "deck tops and sizes survive")
+			check(v.needs_order((p + 1) % 3) == g.needs_order((p + 1) % 3), "others still choosing is visible"))
+
+
+func test_tutorial_script() -> void:
+	var gs := GameState.new(2, TutorialScript.SEED, TutorialScript.setup())
+	var mine := TutorialScript.player_actions()
+	var cpu: Array = TutorialScript.cpu_actions().map(func(a):
+		var b: Dictionary = a.duplicate()
+		b.player = 1
+		return b)
+	for rnd in 2:
+		while gs.phase != GameState.Phase.ROUND_OVER:
+			var queue: Array = mine if (gs.phase != GameState.Phase.CHOOSE_ORDER and gs.current_player == 0) \
+				or (gs.phase == GameState.Phase.CHOOSE_ORDER and gs.needs_order(0)) else cpu
+			if queue.is_empty():
+				check(false, "tutorial script ran out of moves in round %d" % (rnd + 1))
+				return
+			var a: Dictionary = queue.pop_front()
+			if not gs.apply(a):
+				check(false, "tutorial move is legal: %s (round %d)" % [a, rnd + 1])
+				return
+		var got: Array = gs.last_round_scores.map(func(b): return b.total)
+		check(got == TutorialScript.EXPECTED_SCORES[rnd], "tutorial round %d scores %s (got %s)" % [rnd + 1, TutorialScript.EXPECTED_SCORES[rnd], got])
+		gs.next_round()
+	check(mine.is_empty() and cpu.is_empty(), "tutorial script fully used")
+	var b0: Dictionary = gs.last_round_scores[0]
+	check(b0.bonus.name == "Calico" and b0.order.met and b0.mod_hits.size() == 2, "round 2: Calico, order met, two arrow hits")
+	check(not gs.last_round_scores[1].order.met, "round 2: the CPU's order fails")

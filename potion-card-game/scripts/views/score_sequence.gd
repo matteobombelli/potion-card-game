@@ -2,12 +2,14 @@ class_name ScoreSequence
 extends RefCounted
 ## Replays a Scoring.score_potion() breakdown on a PotionView, step by step:
 ## card values, modifier zaps, potion type, special order, round total.
+## The tutorial passes a `hook` that is awaited after each stage, as
+## hook.call(stage, info) with stage "values", "mod_hit", "bonus", "order" or "total".
 
 const STEP := 0.24       # pause between card values
 const ZAP_STEP := 0.3    # pause between modifier zaps
 
 
-static func run(potion: PotionView, b: Dictionary) -> void:
+static func run(potion: PotionView, b: Dictionary, hook := Callable()) -> void:
 	var tree := potion.get_tree()
 	var running := 0
 	var toward := potion.toward_center()
@@ -25,6 +27,8 @@ static func run(potion: PotionView, b: Dictionary) -> void:
 		Fx.float_text(v.global_position + text_off, text, Palette.NEGATIVE if value < 0 else Palette.TEXT, 46, rise)
 		potion.set_round_score(running)
 		await tree.create_timer(STEP).timeout
+	if hook.is_valid():
+		await hook.call("values", { "running": running })
 
 	# 2. Modifier icons zap the cards they reward.
 	for hit in b.mod_hits:
@@ -38,6 +42,8 @@ static func run(potion: PotionView, b: Dictionary) -> void:
 		Fx.float_text(dst.global_position + text_off + jitter, "+%d" % hit.pts, col.lightened(0.3), 40, rise)
 		potion.set_round_score(running)
 		await tree.create_timer(ZAP_STEP).timeout
+		if hook.is_valid():
+			await hook.call("mod_hit", { "hit": hit, "running": running })
 
 	# 3. Potion type bonus.
 	if b.bonus.pts > 0:
@@ -50,6 +56,8 @@ static func run(potion: PotionView, b: Dictionary) -> void:
 		potion.set_round_score(running)
 		var at := potion.get_viewport().get_canvas_transform() * (potion.global_position + toward * (CardArt.SIZE.y + 30.0))
 		await Fx.banner("%s  +%d" % [b.bonus.name.to_upper(), b.bonus.pts], Palette.TITLE, 0.55, 72, at)
+	if hook.is_valid():
+		await hook.call("bonus", { "bonus": b.bonus, "running": running })
 
 	# 4. Special order.
 	if not b.order.is_empty():
@@ -59,8 +67,12 @@ static func run(potion: PotionView, b: Dictionary) -> void:
 			potion.set_round_score(running)
 			Fx.float_text(potion.order_tag_global_position() + toward * 40, "ORDER +%d" % b.order.pts, Palette.POSITIVE, 36, rise * 0.6)
 		await tree.create_timer(0.45).timeout
+		if hook.is_valid():
+			await hook.call("order", { "order": b.order, "running": running })
 
 	# 5. Round total.
 	Fx.float_text(potion.global_position + toward * CardArt.SIZE.y * 0.85, "= %d" % b.total,
 		Palette.SCORE if b.total >= 0 else Palette.NEGATIVE, 56, rise * 0.5, 1.1)
 	await tree.create_timer(0.35).timeout
+	if hook.is_valid():
+		await hook.call("total", { "total": b.total })

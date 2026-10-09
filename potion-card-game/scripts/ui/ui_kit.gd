@@ -1,6 +1,7 @@
 class_name UiKit
 extends RefCounted
-## Shared control styling: buttons with a springy hover/press, and full-screen dims.
+## Shared control styling: buttons with a springy hover/press, text fields,
+## segmented choices, panels, labels and full-screen dims.
 
 
 static func button(text: String, font_size := 34, accent := Palette.TARGET) -> Button:
@@ -22,6 +23,68 @@ static func button(text: String, font_size := 34, accent := Palette.TARGET) -> B
 	b.button_down.connect(func(): _spring(b, 0.94))
 	b.button_up.connect(func(): _spring(b, 1.08 if b.is_hovered() else 1.0))
 	return b
+
+
+## A row of toggle buttons where exactly one is chosen. Calls on_change(index).
+static func segmented(options: Array, selected: int, on_change: Callable, font_size := 30) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	var group := ButtonGroup.new()
+	for i in options.size():
+		var b := button(str(options[i]), font_size)
+		b.toggle_mode = true
+		b.button_group = group
+		b.button_pressed = i == selected
+		b.add_theme_color_override("font_pressed_color", Palette.TITLE)
+		b.add_theme_stylebox_override("pressed", _box(Palette.PANEL_HOVER, Palette.TITLE))
+		b.pressed.connect(func(): on_change.call(i))
+		row.add_child(b)
+	return row
+
+
+## A single on/off button showing `on_text` or `off_text`. Calls on_change(bool).
+static func toggle(on_text: String, off_text: String, on: bool, on_change: Callable, font_size := 30) -> Button:
+	var b := button(on_text if on else off_text, font_size)
+	b.toggle_mode = true
+	b.button_pressed = on
+	b.add_theme_stylebox_override("pressed", _box(Palette.PANEL_HOVER, Palette.TITLE))
+	b.toggled.connect(func(v: bool):
+		b.text = on_text if v else off_text
+		on_change.call(v))
+	return b
+
+
+static func line_edit(text := "", placeholder := "", font_size := 30, max_length := 0) -> LineEdit:
+	var e := LineEdit.new()
+	e.text = text
+	e.placeholder_text = placeholder
+	e.max_length = max_length
+	e.add_theme_font_size_override("font_size", font_size)
+	e.add_theme_color_override("font_color", Palette.TEXT)
+	e.add_theme_color_override("font_placeholder_color", Palette.TEXT_DIM.darkened(0.3))
+	e.add_theme_color_override("caret_color", Palette.TITLE)
+	e.add_theme_stylebox_override("normal", _box(Palette.PANEL_PRESSED, Palette.PANEL_BORDER))
+	e.add_theme_stylebox_override("focus", _box(Palette.PANEL_PRESSED, Palette.TITLE))
+	return e
+
+
+## A rounded panel box for grouping controls.
+static func panel(padding := 28) -> PanelContainer:
+	var p := PanelContainer.new()
+	var s := _box(Color(Palette.PANEL, 0.92), Palette.PANEL_BORDER)
+	s.set_content_margin_all(padding)
+	p.add_theme_stylebox_override("panel", s)
+	return p
+
+
+static func label(text: String, size := 30, color := Palette.TEXT, center := false) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.label_settings = Fx.label_settings(size, color, maxi(4, size / 5))
+	if center:
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return l
 
 
 ## A full-screen rect that dims the table and swallows clicks behind an overlay.

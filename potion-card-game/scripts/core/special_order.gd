@@ -32,6 +32,42 @@ static func build_deck() -> Array[SpecialOrder]:
 	return out
 
 
+## Stands in for another player's order that you can't see yet.
+static func hidden() -> SpecialOrder:
+	return make(-1, Kind.OUTSIDE_COLOR, 0)
+
+
+func is_hidden() -> bool:
+	return id < 0
+
+
+## JSON-safe form: [id, kind, points, color].
+func to_array() -> Array:
+	return [id, kind, points, color]
+
+
+static func from_array(a) -> SpecialOrder:
+	if a == null:
+		return null
+	return make(int(a[0]), int(a[1]), int(a[2]), int(a[3]))
+
+
+## Parses a tutorial spec like "OUTSIDE:RED", "LACKS:BLUE", "ALL_MODS", "NO_MOD",
+## "OOPS_TWIN" or "BASE_ZERO" into [kind, color], or [] if malformed.
+static func parse_spec(spec: String) -> Array:
+	var parts := spec.split(":")
+	var kinds := { "OUTSIDE": Kind.OUTSIDE_COLOR, "LACKS": Kind.LACKS_COLOR, "ALL_MODS": Kind.ALL_MODIFIERS,
+		"NO_MOD": Kind.NO_MODIFIER_BONUS, "OOPS_TWIN": Kind.OOPS_TWIN, "BASE_ZERO": Kind.BASE_ZERO }
+	if not kinds.has(parts[0]):
+		return []
+	var color := -1
+	if parts.size() > 1:
+		color = CardData.COLOR_NAMES.map(func(n): return n.to_upper()).find(parts[1])
+		if color < 0:
+			return []
+	return [kinds[parts[0]], color]
+
+
 ## `mod_hits` and `bonus_names` come from Scoring so nothing is computed twice.
 func is_met(cards: Array, mod_hits: Array, bonus_names: Array) -> bool:
 	if cards.is_empty():

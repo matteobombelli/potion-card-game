@@ -18,11 +18,13 @@ var _round_label := Label.new()
 var _order_tag := PanelContainer.new()
 var _order_label := Label.new()
 var _order_style := StyleBoxFlat.new()
+var _think_label := Label.new()
 var _total_shown := 0
 var _time := 0.0
+var _thinking := false
 
 
-func setup(p_index: int, p_top_seat: bool) -> void:
+func setup(p_index: int, p_top_seat: bool, p_name := "") -> void:
 	player_index = p_index
 	top_seat = p_top_seat
 	ghost_left.side = GameState.Side.LEFT
@@ -34,9 +36,13 @@ func setup(p_index: int, p_top_seat: bool) -> void:
 	var plaque_y := CardArt.SIZE.y / 2.0 + 42.0
 	_plaque.position = Vector2(0, -plaque_y if top_seat else plaque_y)
 	add_child(_plaque)
-	_name_label.text = "PLAYER %d" % (p_index + 1)
+	_name_label.text = p_name if p_name != "" else "PLAYER %d" % (p_index + 1)
 	_name_label.label_settings = Fx.label_settings(30, Palette.TEXT, 8)
 	_plaque.add_child(_name_label)
+	_think_label.text = "..."
+	_think_label.label_settings = Fx.label_settings(30, Palette.TITLE, 8)
+	_think_label.hide()
+	_plaque.add_child(_think_label)
 	_total_label.label_settings = Fx.label_settings(38, Palette.SCORE, 8)
 	_plaque.add_child(_total_label)
 	_round_label.label_settings = Fx.label_settings(30, Palette.POSITIVE, 8)
@@ -59,9 +65,23 @@ func setup(p_index: int, p_top_seat: bool) -> void:
 
 
 func _process(delta: float) -> void:
-	if active:
+	if active or _thinking:
 		_time += delta
+	if active:
 		queue_redraw()
+	if _thinking:
+		_think_label.text = ".".repeat(1 + int(_time * 3.0) % 3)
+
+
+func set_player_name(n: String) -> void:
+	_name_label.text = n
+	_layout_plaque()
+
+
+## Pulsing dots by the name while this player (CPU or remote) decides.
+func set_thinking(on: bool) -> void:
+	_thinking = on
+	_think_label.visible = on
 
 
 func _draw() -> void:
@@ -168,14 +188,40 @@ func hide_round_score() -> void:
 	create_tween().tween_property(_round_label, "modulate:a", 0.0, 0.3)
 
 
-## Shows the special order this player kept (null hides it).
+## Shows the special order this player kept (null hides it; a hidden order shows as secret).
 func set_order(order: SpecialOrder) -> void:
 	if order == null:
 		_order_tag.hide()
 		_layout_plaque()
 		return
+	if order.is_hidden():
+		set_order_hidden()
+		return
 	_order_label.text = "%s  +%d" % [order.title(), order.points]
 	_order_style.border_color = CardArt.fx_color(order.color).lightened(0.25) if order.color >= 0 else Palette.ORDER_NEUTRAL
+	_show_order_tag()
+
+
+## Another player has chosen an order you can't see yet.
+func set_order_hidden() -> void:
+	_order_label.text = "SECRET ORDER"
+	_order_style.border_color = Palette.PANEL_BORDER
+	_show_order_tag()
+
+
+func has_hidden_order() -> bool:
+	return _order_tag.visible and _order_label.text == "SECRET ORDER"
+
+
+## Flips a secret order over to show what it was.
+func reveal_order(order: SpecialOrder) -> void:
+	var t := _order_tag.create_tween()
+	_order_tag.pivot_offset = _order_tag.get_combined_minimum_size() / 2.0
+	t.tween_property(_order_tag, "scale:x", 0.0, 0.12)
+	t.tween_callback(func(): set_order(order))
+
+
+func _show_order_tag() -> void:
 	_order_tag.modulate = Color.WHITE
 	_order_tag.show()
 	_layout_plaque()
@@ -219,4 +265,5 @@ func _layout_plaque() -> void:
 	_total_label.pivot_offset = tw / 2.0
 	x += tw.x + gap
 	_order_tag.position = Vector2(x, -ow.y / 2.0)
+	_think_label.position = Vector2(-total_w / 2.0 - 52.0, -nw.y / 2.0)
 	_round_label.position = Vector2(total_w / 2.0 + gap, -rw.y / 2.0)
